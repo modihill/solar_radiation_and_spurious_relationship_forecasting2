@@ -1,0 +1,953 @@
+---
+title: "MATH1307 Forecasting Assignment 2"
+author: "Hill Jigishkumar Modi (S3827516)"
+date: "25/09/2021"
+output: 
+  html_document:
+    fig_height: 7
+    fig_width: 11
+    fig_caption: yes
+    highlight: tango
+    keep_md: yes
+    theme: readable
+    toc: yes
+    toc_depth: 4
+
+---
+
+
+
+# **Introduction**
+
+There are two tasks in this Report.
+
+  1. **Data**: The monthly average Solar Radiatoin reaching the ground on perticular location over the globe as dependent variable for time series regression model and monthly Precipitation on the same location as an independent variable for time series regression model. The monthly time period is between January, 1960 and December, 2014.
+
+  The main aim of the first task is to predict the amount of "Horizontal Solar Radiation" reaching the ground at perticular location over the globe for upcoming two years based on the time series analysis. Time Series Regression Models with independent variable "Precipitation", dynlm, exponential smoothing and state-space models are used for this analysis. Then, the appropriate measures of resisual diagnostic checks and model performance measures MASE, AIC and BIC will be considered to find the best optimal model to predict the 2 years ahead forecast of "Solar Radiation".
+
+
+  2. **Data**: Quarterly Residential Property Price Index(PPI) and Quarterly Population change in victoria over the period of September 2003 and December 2016.
+
+    
+  The aim of the second task is to demonstrate whether the correlation between the Quarterly Residential Property Price Index(PPI) and Quarterly Population change in victoria is spurious or not.
+
+
+##### **Importing the necessary libraries**
+```{r, message=FALSE}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(knitr)
+library(TSA)
+library(tseries)
+library(car)
+library(dynlm)
+library(Hmisc)
+library(forecast)
+library(xts)
+library(ggplot2)
+library(AER)
+library(x12)
+library(dLagM)
+library(kableExtra)
+
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+
+```
+
+
+
+##### **Function Definations** 
+```{r}
+# Descriptive Analysis function
+descriptive_analysis <- function(ts, object)
+{
+  plot(ts,
+       ylab = c(paste0(toString(object))),
+       main = c(paste0("Time Series Plot of ",toString(object))),
+       type="o")
+  points(y=ts,x=time(ts), pch=as.vector(season(ts)))
+  
+  acf(ts,
+      lag.max = 48,
+      main = c(paste0("ACF plot of ",toString(object))))
+  
+  print(adf.test(ts))
+}
+
+
+# Function for Decomposition
+decom <- function(ts, ts_series)
+{
+  decom.x12 = x12(ts)
+  plot(decom.x12 , sa=TRUE , trend=TRUE,
+       main = c(paste0("Monthly ", toString(ts_series)), " X12 Decomposed Series"))
+  
+  plotSeasFac(decom.x12)
+  
+
+  decomposition <- stl(ts, t.window=15, s.window="periodic", robust=TRUE)
+  plot(decomposition,
+       main = c(paste0("Monthly ", toString(ts_series)), " STL Decomposed Series"))
+}
+
+
+# Function for Summary and Residual Analysis
+summary_residual_analysis <-  function(m)
+{
+  summary(m, diagnostics = TRUE)
+  checkresiduals(m$model)
+  print(bgtest(m$model))
+  print(vif(m$model))
+  print(shapiro.test(m$model$residuals))
+}
+```
+
+# **Task-1** : Analysis and Prediction of Monthly Average Solar Radiation
+
+## **Data Preparation**
+```{r, message=FALSE}
+task_1 <- read_csv("data.x.csv")
+solar_radiation <- read_csv("data1.csv")
+```
+
+```{r}
+head(solar_radiation)
+class(solar_radiation)
+```
+After importing necessary libraries and dataset, We must convert each variable into time-series object for Time Series Analysis.
+
+```{r}
+solar_radiation_TS <- ts(solar_radiation, start = c(1960,1), frequency = 12)
+solar_TS <- ts(solar_radiation$solar, start = c(1960,1), frequency = 12)
+ppt_TS <- ts(solar_radiation$ppt, start = c(1960,1), frequency = 12)
+
+solar_radiation_TS %>% head()
+class(solar_radiation_TS)
+```
+##### **1. Solar Radiation**
+```{r}
+head(solar_TS)
+class(solar_TS)
+```
+##### **2. Precipitation**
+```{r}
+head(ppt_TS)
+class(ppt_TS)
+```
+
+## **Descriptive Analysis**
+
+#### 1. Solar Radiation
+```{r, warning=FALSE}
+descriptive_analysis(solar_TS, "Monthly Average Solar Radiation")
+```
+
+**Time Series Characteristics**
+
+  **1. Trend** : These is no obvious trend in the time series and no decaying patterns in ACF plot.  
+  
+  **2. Seasonality** : There is stromg seasonality as December and January has lowest amount of Solar Radiation, while June and July has highest. Patterns in ACF plot confirms the finding.
+  
+  **3. Changing Variance** : Need to remove seasonalty for clear picture of changing variance, however around 1965 and 1986 there was little variance. 
+  
+  **4. Behaviour** : First, need to reomve seasonality to assume the behaviour.
+  
+  **5. Intervention Point** : There is no clear intervention point. 
+  
+  **6. Stationarity**: ACF plot suggests there is no trend and p-value < 0.05 in adf test suggest that solar radiation time series is stationary series with 5% level of significance.
+
+
+#### 2. Precipitation
+```{r, warning=FALSE}
+
+descriptive_analysis(ppt_TS, "Monthly Precipitation")
+```
+**Time Series Characteristics**
+
+  **1. Trend** : There was downward trend during begining of the series.
+  
+  **2. Seasonality** : There is strong evidence of seasonality as July and August records the lowest amont of Precipitation, while December and January records highest.
+  
+  **3. Changing Variance** : Need to remove seasnality to have clear picture of changing variance.
+  
+  **4. Behaviour** : Need to remove seasnality to have clear picture of behaviour of the series.
+  
+  **5. Intervention Point** : There is no intervention point.
+  
+  **6. Stationarity**: ACF plot suggests there is no trend and p-value < 0.05 in adf test suggest that precipitation time series is stationary series with 5% level of significance.
+
+
+#### 3. Combined Scaled Time Series Plot
+```{r}
+
+combined <- scale(solar_radiation_TS)
+
+plot(combined, 
+     plot.type="s", 
+     col = c("#05386b","#f01b1d"), 
+     main = "Scaled Time Series Plot of Solar Radiation and Precipitation")
+
+legend("topleft", 
+       lty=1, 
+       col = c("#05386b","#f01b1d"), 
+       c("Solar Radiation", "Precipitation"))
+
+```
+The dependent series Solar Radiatoin and independent series Precipitation are scaled to fit both the series in one plot. This way we can assume the relatoinship between the series.
+
+From the plot, we can depict that, both time series shares negative relationship, as for high value of solar radiation, precipitation value is low and vice-versa. 
+
+To confirm our assumption, we can look at the correlation of both series.
+
+**Correlation**
+```{r}
+cor(solar_TS, ppt_TS) %>% round(3)
+```
+The value of correlation coefficient is (-0.454), which confirms the assumption that both series shares moderate negative relationship.
+
+## **Decomposition**
+#### 1. Solar Radiation
+```{r, warning=FALSE, error=FALSE, message=FALSE}
+decom(solar_TS, "Average Solar Radiatoin")
+```
+
+From x12 graph, it depicts that the seasonlly adjusted time-series line follows different line from the original time-series line, which is indication of strong seasonality which means seasonality is the main cause of variation. While little different trend line also indicates that trend is also cause of little amount of variation. When trend lines and seasonally adjust lines don't overlap, indicates the existance of outliers.
+
+The adjusted seasonal factors are expected to have seaonal pattern around the mean level in every month, and the expected pattern is observed too, indicating June and July are the months records highest amount of Solar Radiation.
+
+
+From STL graph, we can conclude that, trend little follows the original pattern around the mean level. Few tall bars from remainder series are caused by some external factors and outliers.
+
+
+#### 2. Precipitation
+```{r, warning=FALSE, error=FALSE}
+decom(ppt_TS, "Precipitation")
+```
+
+From x12 graph, it depicts that the seasonlly adjusted time-series line follows different line from the original time-series line after 1987, which is indication of strong seasonality which means seasonality is the main cause of variation in the second half of time-series. While little different trend line also indicates that trend is also cause of little amount of variation after the year of 1987. 
+
+The adjusted seasonal factors are expected to have seaonal pattern around the mean level in every month, however factors are diverted and not following the seasonal pattern around mean for any month except month of July and August.
+
+From STL graph, we can conclude that, trend follows the original pattern as it shows the downward trend during the begining of the series and then remains stable. Few tall bars from remainder series are caused by some external factors and outliers.
+
+## **Time Series Regression Methods**
+
+After data exploration, the next step is model fitting, various Time-Series Regression Models are fitted and residual diagnostics checked of respected model to find the best Time Series Regression Model.
+
+### Finite Distributed Lag Model
+
+The independent series "Precipitation" and its lags will help to explain the variation in the dependent series "Solar Radiation". The Lag lenth will be specified in the Finite Distributed Lag Model to create loop which will calculate varios performace measures "AIC()", "BIC()" and "MASE()" for each lag, and the model with lowest MASE() will be taken for further analysis.
+
+```{r}
+for (i in 1:12)
+{
+  model_dlm <- dlm(formula = solar ~ ppt, data = data.frame(solar_radiation), q = i)
+  cat("q = ", i, 
+      "AIC = ", AIC(model_dlm$model), 
+      "BIC = ", BIC(model_dlm$model), 
+      "MASE = ", MASE(model_dlm)$MASE, "\n")
+}
+```
+It is observed that the values of information criteria as well as MASE decrease as the lag q increases, so we will fit a finite DLM with a number of lags = 10.
+
+
+Above output shows that, value of performace measures `AIC(), BIC(), MASE()` is decreased as lag increased. So, an attempt to fit the model with lag = 12 was taken.
+
+```{r}
+
+model1 <- dlm(formula = solar ~ ppt, 
+              data = data.frame(solar_radiation), 
+              q = 12)
+
+summary_residual_analysis(model1)
+```
+Summary depicts that, only `ppt.t` and `ppt.12` lag-weights(co-efficients) are statistically significant at 5% level. While adjusted R squared is 30.77% indicating model explains only 30.77% of variation in the Solar Radiatoin, F-statistics of the model is statistically insignificant as p-value > 0.05.
+
+Histogram in the residual checks has long right tail, there is no random pattern in the residuals and wave pattern in ACF indicates seasonality in the the residuals. P-value(< 0.05) in Shapiro-wilk test indicates that residuals are significantly deviates from the normal distribution assumption. Hence, diagnostic checks are poor for this model.
+
+Breusch-Godfrey test supports serial correlation at 5% of statistical level.
+
+All vif values are below 10 indicating there model has no issue with high multicollinearity.
+
+Overall, model is not a good fit for the given data and can not be further investigated.
+
+### PolyNomial Distributed Lag Model
+
+The finite DLM model had very poor residual checks. Hence, attempt to fit 2nd order polynomial model with lag = 12 was taken.
+
+```{r}
+model2 = polyDlm(x = as.vector(solar_radiation$ppt), 
+                 y = as.vector(solar_radiation$solar), 
+                 q = 12, 
+                 k = 2, 
+                 show.beta = TRUE)
+
+summary_residual_analysis(model2)
+```
+
+
+From summary, it is clear that all lag weights are statistically significant. The adjusted r-squared is 30.87%, which is comparetely slighly better then DLM model, but it is still very low in general. While, the overall model is statistically significant as p-value for F-statistics is < 0.05.
+
+Histogram in the residual checks has long right tail, there is no random pattern in the residuals and wave pattern in ACF indicates seasonality in the the residuals. P-value(< 0.05) in Shapiro-wilk test indicates that residuals are significantly deviates from the normal distribution assumption. Hence, diagnostic checks are poor for this model.
+
+Breusch-Godfrey test supports serial correlation at 5% of statistical level with p-value(<0.05).
+
+Vif values of z.t1 and z.t2 are above 10 indicating model has high multicollinearity issue..
+
+Overall, model is not a good fit for the given data and can not be further investigated.
+
+### Koyck Distributed Lag Model
+
+The Koyck Distributed Lag Model was fitted on the given data.
+
+```{r, warning=FALSE}
+
+model3 = koyckDlm(x = as.vector(solar_radiation$ppt), 
+                 y = as.vector(solar_radiation$solar))
+summary_residual_analysis(model3)
+```
+
+From the summary section, it is conclude that all co-efficients are statistically significant.Overall koycl DLM model is statistically significant with p-value < 0.05. While adjusted R squared is 75.91% which is considerable.
+
+The statistically significant Weak instruments test is indicating that model at the first stage of least-squares estimation is significant. While, statistically significant Wu-Hausman test indicates that there is significant correlation between the explanatory variable and the error term.
+
+Histogram in the residual checks is symmentric, there is no random pattern in the residuals and wave pattern in ACF indicates seasonality in the the residuals. P-value(< 0.05) in Shapiro-wilk test indicates that residuals are significantly deviates from the normal distribution assumption. Hence, diagnostic checks are poor for this model.
+
+Breusch-Godfrey test supports serial correlation at 5% of statistical level with p-value(<0.05).
+
+As all vif value is < 10, there is no issue of multi-collinearity.
+
+Even though Koyck Model has poor residual checks, so far is best model. 
+
+### Autoregressive Distributed Lag Model
+
+The attempt to fit ARDL DLM was taken to find the more appropriate model than Koyck distributed lag model.
+
+The loop was used to find the ardlDLM(p,q) parameters with range of lag lengths. AIC(), BIC() and MASE() criteria was taken to find the optimal lag order p and q.
+
+```{r}
+
+for (i in 1:5)
+{
+  for(j in 1:5)
+  { 
+    model_ardlm <- ardlDlm(formula = solar ~ ppt, 
+                           data = data.frame(solar_radiation), 
+                           p = i,
+                           q = j)
+    cat("p =", i, 
+        "q =" , j,
+        "AIC =", AIC(model_ardlm$model), 
+        "BIC =", BIC(model_ardlm$model),
+        "MASE =", MASE(model_ardlm)$MASE, "\n")
+  }
+}
+```
+It is observed that the values of `MASE()` decreased as the lag p increaseed for lag q = 5.
+
+Ergo, on the base of MASE() value, the following parameters were taken to fit the Auto-Regressive Distributed Lag Models.
+
+ardlDLM(3,5)
+
+ardlDLM(4,5)
+
+ardlDLM(5,5),
+
+All three models were investigated.
+
+**ardlDLM(3,5)**
+```{r}
+
+model4_1 = ardlDlm(formula = solar ~ ppt, 
+        data = data.frame(solar_radiation), 
+        p = 3,
+        q = 5)
+        
+summary_residual_analysis(model4_1)
+```
+**ardlDLM(4,5)**
+```{r}
+
+model4_2 = ardlDlm(formula = solar ~ ppt, 
+        data = data.frame(solar_radiation), 
+        p = 4,
+        q = 5)
+        
+summary_residual_analysis(model4_2)
+
+```
+
+**ardlDLM(5,5)**
+```{r}
+
+model4_3 = ardlDlm(formula = solar ~ ppt, 
+        data = data.frame(solar_radiation), 
+        p = 5,
+        q = 5)
+        
+summary_residual_analysis(model4_3)
+```
+
+From all the model Summaries, it is observed that every Auto-Regressive Distributed lag model was statistically significant at 5% level. Adjusted r-squared is around 93.2% for each model indicating model explains 93.2% of variation in the Solar Radiatoin. 
+The 2nd Lag of dependent series "Solar Radiation" is statistically insignificant for every ARDL model, while other lags of dependent series is statistically significant for every model. 
+
+For ardlDLM(3,5), only 2nd lag of independent series "Precipitation", for ardlDLM(4,5) only 4th lag of independent series "Precipitation" is statistically significant. While all other lags of independent series is statistically insignificant for all ardlDLM model.
+
+While in terms of Residual Diagnostic Checking, all models closely follows each other.
+
+Histogram in the residual checks is appeared to be symmentric, but residuals are not completly random as there is changing variance. Even though ACF plots of ardlDLM models are slightly better then other models, there is still correlation left in the residuals. P-value(< 0.05) in Shapiro-wilk test indicates that residuals are significantly deviates from the normal distribution assumption. Hence, diagnostic checks are poor for this model.
+
+Breusch-Godfrey test supports serial correlation at 5% of statistical level with p-value(<0.05).
+
+There is a sign of high multicollinearity issue as all models has vif value > 10.
+
+### Dynamic Models
+
+The attempt was taken to fit the Dynamic models to Monthly Average Solar Radation time series.
+
+There is no clear intervention point in the series, although there is minor unusual drop in the year of 2014, but it is too early to conclude that it is intervention point.
+
+Hence, in the dynamic models, there will be not `S.T`  components.
+
+**model5_1**
+```{r}
+model5_1 = dynlm(solar_TS ~ L(solar_TS , k = 1 ) + season(solar_TS))
+summary(model5_1)
+checkresiduals(model5_1)
+```
+**model5_2**
+```{r}
+model5_2 = dynlm(solar_TS ~ L(solar_TS , k = 1 ) + trend(solar_TS) + season(solar_TS))
+summary(model5_2)
+checkresiduals(model5_2)
+```
+**model5_3**
+```{r}
+model5_3 = dynlm(solar_TS ~ L(solar_TS , k = 1 ) + L(solar_TS , k = 2 ) + trend(solar_TS) + season(solar_TS))
+summary(model5_3)
+checkresiduals(model5_3)
+```
+**model5_4**
+```{r}
+model5_4 = dynlm(solar_TS ~ L(solar_TS , k = 1 ) + L(solar_TS , k = 2 ) + L(solar_TS , k = 3 ) +  season(solar_TS))
+summary(model5_4)
+checkresiduals(model5_4)
+```
+**model5_5**
+```{r}
+model5_5 = dynlm(solar_TS ~ L(solar_TS , k = 1 ) + L(solar_TS , k = 2 ) + L(solar_TS , k = 3 ) + trend(solar_TS) + season(solar_TS))
+summary(model5_5)
+checkresiduals(model5_5)
+```
+
+From all the model Summaries, it is observed that coefficient of trend is not significant in any of dynamic models, however all dynamic models are statistically significance as p-value < 0.05. Adjusted r-squared is between(94-96)% in each model indicating model explains (94 - 96)% of variation in the Solar Radiatoin. 
+
+While in terms of Residual Diagnostic Checking, all models closely follows each other.
+
+Histogram in the residual checks is appeared to be symmentric, but residuals are not completly random and range of residuals is between(-10 to 10). There is still correlation left in the residuals. Hence, diagnostic checks are poor for these models.
+
+To conclude, the time-series regression models were not able to capture and explain autocorrelation in the Solar Radiation Time series. 
+
+**Model Comparison**
+
+The following table display the each fitted Time-series regression models with `MASE()`, `AIC()` and `BIC()`. 
+
+```{r}
+attr(model3$model,"class") = "lm"
+models <- c("Finite DLM", "Poly DLM", "Koyck", "ARDL_3_5", "ARDL_4_5", "ARDL_5_5", "dynlm_1", "dynlm_2", "dynlm_3", "dynlm_4", "dynlm_5")
+
+aic <- AIC(model1$model, model2$model, model3$model, model4_1$model, model4_2$model, model4_3$model, model5_1,model5_2,model5_3, model5_4, model5_5)$AIC
+
+bic <- BIC(model1$model, model2$model, model3$model, model4_1$model, model4_2$model, model4_3$model, model5_1,model5_2,model5_3, model5_4, model5_5)$BIC
+
+mase <- MASE(model1$model, model2$model, model3$model, model4_1, model4_2, model4_3, lm(model5_1), lm(model5_2), lm(model5_3), lm(model5_4), lm(model5_5))$MASE
+
+Model_Comparison <- data.frame(models, mase, aic, bic)
+colnames(Model_Comparison) <- c("Model","MASE","AIC", "BIC")
+
+```
+
+## **Exponential smoothing methods**
+
+As none of the Distributed Lag Model was sufficient to capture the auto-correlation, the attempt to fit the exponential smoothing models was taken. As there is strong seasonal pattern in Solar Radiatoin series, `seasonality = {additive, multiplicative}` will be considered with the combination of `exponential = {TRUE, FALSE}` and `damped = {TRUE, FALSE}`.
+
+Hence, all the six possible exponential smoothing models will fitted and checked in loop. 
+```{r}
+
+HW_models = c("Holt_Winter additive method",
+              "Holt_Winter multiplicative method with exponential trend",
+              "Holt_Winter multiplicative method",
+              "Holt_Winter additive method",
+              "Holt_Winter multiplicative method with exponential trend",
+              "Holt_Winter multiplicative method")
+
+exponential = c(TRUE,FALSE)
+seasonality = c("additive","multiplicative")
+damped = c(TRUE,FALSE)
+exponential_models <- expand.grid(exponential, seasonality, damped)
+exponential_models <- exponential_models[-c(1,5),]
+
+HW_AIC <- array(NA, 6)
+HW_BIC <- array(NA, 6)
+HW_MASE <- array(NA, 6)
+levels <- array(NA, dim=c(6,3))
+
+for (i in 1:6)
+{
+  HW_model <- hw(solar_TS,
+                 exponential = exponential_models[i,1],
+                 seasonal = toString(exponential_models[i,2],
+                                     damped = exponential_models[i,3]))
+  HW_AIC[i] <- HW_model$model$aic
+  HW_BIC[i] <- HW_model$model$bic
+  HW_MASE[i] <- accuracy(HW_model)[6]
+  levels[i,1] <- exponential_models[i,1]
+  levels[i,2] <- toString(exponential_models[i,2])
+  levels[i,3] <- exponential_models[i,3]
+  summary(HW_model)
+  checkresiduals(HW_model)
+  print(shapiro.test(HW_model$model$residuals))
+}
+
+results_HW = data.frame(HW_models, levels, HW_MASE, HW_AIC, HW_BIC)
+colnames(results_HW) = c("Model", "Exponential","Seasonality","Damped","MASE","AIC", "BIC")
+
+kbl(results_HW) %>% kable_paper()
+
+```
+**Holt-Winters’ additive method_Damped**
+
+Residuals from Holt-Winters’ additive method (Plot 1) are mostly follow random pattern and has symmentric histogram, but range of standardise residuals is between (-10 to 10), ACF plot depicts that there is strong correlation left in the residuals. P-value(< 0.05) in Shapiro-wilk test indicates that residuals are significantly deviates from the normal distribution assumption.
+
+**Holt-Winters’ multiplicative method with exponential trend_Damped**
+
+Residuals from Holt-Winters’ multiplicative method with exponential trend (Plot 2) has so far the best residual diagnostics, as residuals follows random pattern, has symmentirc histogram and most of standadised residuals are between (-1 to 3). 
+
+The significant correlation in ACF plot appears on the 24th Lag. However, p-value(0.0065) of L-jung-Box test suggests the autocorrelation in the residuals.
+
+Although, P-value(< 0.05) in Shapiro-wilk test indicates that residuals are significantly deviates from the normal distribution assumption.
+
+**Holt-Winters’ multiplicative method_Damped**
+
+Residuals from Holt-Winters’ multiplicative method (Plot 3) closely follows previous model (Plot 2).
+
+**Holt-Winters’ additive method**
+
+Residuals from Holt-Winters’ additive method (Plot 4) closely follows model (Plot 1).
+
+**Holt-Winters’ multiplicative method with exponential trend**
+
+Residuals from Holt-Winters’ multiplicative method with exponential trend (Plot 5) closely follows model (Plot 2).
+
+**Holt-Winters’ multiplicative method**
+
+Residuals from Holt-Winters’ multiplicative method (Plot 6) closely follows model (Plot 3).
+
+
+In a nutshell, from above plots, it is observed that dumping the trend does not make noticable difference to the model without damped trend, summary and residuals diagnostics are quite similar.
+
+The residuals diagnostics are improved in the exponential smoothing models, the randomness in the residuals has increased and auto-correlation has been decreased. Although, there is an issue of normality assumption.
+
+The `**Holt_Winter multiplicative**` method has lowest MASE() value, which is so far the best suitable model.
+
+## **State-space Models**
+
+The additive and multiplicative errors can be added to exponential smoothing method. This models are called as state-space model. The attempt was taken to fit the state-space models.
+
+The 4 state-space models, `ets_models = {AAA, MAA, MAM, MMM}` were fitted with the combination of `damped = {TRUE, FALSE}`. Some variations of State-Space models were forbidden.
+
+```{r}
+
+ets_models = c("AAA", "MAA", "MAM", "MMM")
+damped = c(TRUE,FALSE)
+ETS_models <- expand.grid(ets_models, damped)
+
+ETS_AIC <- array(NA, 8)
+ETS_BIC <- array(NA, 8)
+ETS_MASE <- array(NA, 8)
+levels <- array(NA, dim=c(8,2))
+
+for (i in 1:8)
+{
+  ETS <- ets(solar_TS,
+             model = toString(ETS_models[i, 1]), damped = ETS_models[i,2])
+  ETS_AIC[i] <- ETS$aic
+  ETS_BIC[i] <- ETS$bic
+  ETS_MASE[i] <- accuracy(ETS)[6]
+  levels[i,1] <- toString(ETS_models[i,1])
+  levels[i,2] <- ETS_models[i,2]
+  summary(ETS)
+  checkresiduals(ETS)
+  print(shapiro.test(ETS$residuals))
+}
+
+
+results_ETS = data.frame(levels, ETS_MASE, ETS_AIC, ETS_BIC)
+colnames(results_ETS) = c("Model","Damped","MASE","AIC", "BIC")
+
+kbl(results_ETS) %>% kable_paper()
+```
+
+
+**AAA_damped**
+
+The standardise residuals(Plot 1) are in the range of (-10 to 10), there is significant correlation in the ACF plot, residuals mostly follow random pattern and has symmentric histogram, P-value(< 0.05) in Shapiro-wilk test indicates that residuals are significantly deviates from the normal distribution assumption.
+
+**MAA_damped**
+
+The standardise residuals(Plot 2), there is significant correlation in the ACF plot, residuals mostly follow random pattern, although some residuals have value less then -4, residuals have symmentric histogram, P-value(< 0.05) in Shapiro-wilk test indicates that residuals are significantly deviates from the normal distribution assumption.
+
+**MAM_damped**
+
+The standardise residuals(Plot 3), there is significant correlation in the ACF plot, residuals mostly follow random pattern, but, residuals have left skewed histogram, P-value(< 0.05) in Shapiro-wilk test indicates that residuals are significantly deviates from the normal distribution assumption.
+
+**MMM_damped**
+
+The model(Plot 4) closely follows previous model(Plot 3).
+
+**AAA**
+
+The model(Plot 5) closely follows AAA_damped model(Plot 1)
+
+**MAA**
+
+The model(Plot 6) has strong auto-correlation in ACF plot, standardise residuals in the range of (-10 to 5)
+
+
+**MAM**
+
+The model(Plot 7) closely follows MAM_damped model(Plot 3)
+
+**MMM**
+
+The model(Plot 8) has strong auto-correlation in ACF plot,  and left skewed histogram with standardise residuals having > 3 values.
+
+
+Overall, the state-space model with lowest MASE() value is ETS(A,Ad,A), which is consist of Additive Errors, Additive Damped Trend and Additive Seasonality.
+
+
+### Auto-Fit State-Space Model
+
+```{r}
+
+ETS_auto_model = ets(solar_TS,model="ZZZ")
+ETS_auto_model$method
+
+```
+
+The Auto-Fit State-Space model suggested ETS(A,Ad,A) model.
+
+This is same model, which was found as best state-space model.
+
+## **Model Comparison**
+
+**Formating results_ETS table **
+```{r}
+
+results_ETS$Damped <- factor(results_ETS$Damped,
+                             levels = c(TRUE, FALSE),
+                             labels = c("Dumped"," "))
+
+results_ETS <- unite(results_ETS,
+                     "Model", c("Model","Damped"), sep = "_")
+
+kbl(results_ETS) %>% kable_paper()
+```
+**Formating results_HW table **
+```{r}
+
+results_HW$Damped <- factor(results_HW$Damped,
+                             levels = c(TRUE, FALSE),
+                             labels = c("Dumped"," "))
+
+results_HW <- unite(results_HW,
+                     "Model", c("Model","Damped"), sep = "_")
+
+results_HW <- results_HW[,-c(2,3)]
+kbl(results_HW) %>% kable_paper()
+```
+**Merge Model Comparison Table**
+
+The Merge Model Comparison Table is arranged with the `ascending order of MASE()`.
+```{r}
+Model_Comparison <- rbind(Model_Comparison, results_ETS, results_HW)
+
+sorted_MASE <- Model_Comparison %>% arrange(MASE)
+kbl(sorted_MASE) %>%
+  kable_paper()
+
+```
+
+## **Forecasting**
+
+The next two years prediction of Solar Radiatoin was made the following models.
+
+  1. Holt-Winters' multiplicative method_Damped, which has lowest MASE() value and had best residual checks.
+  
+  2. Holt_Winter multiplicative method with exponential trend_Dumped, which has second lowest MASE() value and had best residual checks.
+  
+  3. AAA_Dumped, which has overall third lowest MASE() value, best state-space model.
+  
+
+The forecast values of all this model was then compared to conclude the best model.
+
+```{r}
+prediction_1 <- hw(solar_TS,
+                   seasonal = "multiplicative",
+                   dumped = TRUE,
+                   h = 2*frequency(solar_TS))
+
+prediction_2 <- hw(solar_TS,
+                   seasonal = "multiplicative",
+                   dumped = TRUE,
+                   exponential = TRUE,
+                   h = 2*frequency(solar_TS))
+
+
+prediction_3 <- ets(solar_TS,
+                    model="AAA",
+                    damped = T)
+prediction_3 <- forecast(prediction_3)
+
+plot(prediction_3,
+     main = "Next Two years Forecast of Solar Radiation)",
+     ylab = "Solar Radiation",
+     fcol = "#e8d31d")
+
+lines(fitted(prediction_3), col = "#e8d31d")
+
+lines(fitted(prediction_2), col = "#039fbe")
+lines(prediction_2$mean, col = "#039fbe", lwd = 2)
+
+lines(fitted(prediction_1), col = "#b20238")
+lines(prediction_1$mean, col = "#b20238", lwd = 2)
+
+
+legend("bottomleft",
+        lty = 1,
+        col = c("black", "#b20238", "#039fbe", "#e8d31d"),
+        c("Data", "Holt-Winters' Multiplicative_Damped", "Holt-Winters' Multiplicative Exponential_Damped", "ETS(A,Ad,A)"))
+```
+
+Fitted lines of both Holt-Winters'  models closely follows the original Solar Radiation Values, while fitted line of ETS(A,Ad,A) little deviates from the original Solar Radiation values around the year of 1965. Hence, both Holt-Winters' methods are better then state-space model. 
+
+Although, predictions are different from each model as ETS(A,Ad,A) model suggest higher Solar Radiation values compared to Holt-Winters' models.
+
+Holt-Winters' multiplicative with exponential Trend_damped model suggest that Solar Radiation values will not fluctuate and remains same for next two years.
+
+While, Holt-Winters' multiplicative_damped model suggest that Solar Radiation will decreased for next two years.
+
+To conclude, Holt-Winters' multiplicative_damped model is the best suitable model in terms of MASE() value and Residual Diagnostic checks to predict the Solar Radiation for 2 years ahead.
+
+Hence, the plot of forecast value of Solar Radiation predicted by Holt-Winters' multiplicative_damped model is shown below.
+```{r}
+plot(prediction_1, fcol = "#b20238", 
+     main = "Forecasting of Solar Radiation in 2015 and 2106",
+     ylab = "Radiation")
+lines(fitted(prediction_1), col = "#b20238")
+
+legend("topleft", 
+       lty = 1, 
+       col = c("black", "#b20238"), 
+       c("Data", "Prediction"))
+```
+
+
+
+**The Following table display the Forecast value of Solar Radiation for 2 years ahead with 80% and 95% Confidence Interval**
+```{r}
+kbl(prediction_1) %>% kable_paper()
+
+```
+
+# **Task - 2** : Demonstrate whether correlation between Residential PPI and Population Change is Spurious or not.
+```{r}
+# data reading
+task_2 <- read_csv("data2.csv")
+
+head(task_2)
+class(task_2)
+```
+The conversion of variables into time-series object is must for analysis.
+
+
+## **Data Preparation**
+```{r}
+# time series object
+task_2_TS <- ts(task_2[,2:3], start = c(2003,3), frequency = 4)
+price_TS <- ts(task_2$price, start = c(2003,3), frequency = 4)
+change_TS <- ts(task_2$change, start = c(2003,3), frequency = 4)
+
+
+task_2_TS %>% head()
+class(task_2_TS)
+```
+##### **1. Residential Property Price Index**
+```{r}
+head(price_TS)
+class(price_TS)
+```
+##### **2. Population Change**
+```{r}
+head(change_TS)
+class(change_TS)
+```
+
+## **Descriptive Analysis**
+
+```{r}
+# descriptive Analysis
+
+plot(task_2_TS,
+     main = "Time Series plot Residential PPI and Population Change",
+     yax.flip = TRUE, 
+     type = 'o')
+```
+
+
+From the above time series plot, it is depicted that Residential Price Property Indec(PPI) in Melbourne and Population Change in Victoria have increased over the time. The both series shows strong positive trend. While population change time series pattern depicts that it has seasonal affect. The above visualization gives indication that, there is somewhat of correlation between two series.
+
+With the help of cross-covariance function (CCF), correlation structure between both series can be displayed to make the conclusion whether series is sprious or not. If the correlation is Spurious, then unusually high correlation structure will be observed in the plot.
+
+## **Cross-Covariance Function**
+
+```{r}
+ccf(as.vector(price_TS), 
+    as.vector(change_TS), 
+    ylab = "Cross-Covariance Function", 
+    main = "CCF plot of Residential PPI and Population Change")
+```
+The CCF plot conclude that correlation between the Residential Property Price Index and Population change is unusual, which is indication of potential spurious correlation. The spurious correlation might be appear due to existance of non-stationary series. 
+
+For further investigation of spurious correlaton, prewhitening procedure will be used. If correlation is spurious, then after the prewhitening process, all the unusual high correlation will be disappered.
+
+But, before the prewhitening procedure, the stationarity of the time-series must be checked and if it is non-stationary, then procedure will be applied to covert the non-stationary series into stationary series.
+
+
+## **Cheking the Stationarity**
+
+#### 1. Residential Property Price Index(PPI)
+
+```{r}
+descriptive_analysis(price_TS, "Residential Property Price Index")
+```
+**Time Series Characteristics**
+
+  **1. Trend** : Time series plot depicts, strong postive trend as PPI has increased over the time. Slowly decaying pattern in ACF plots gives strong assumption of existance of trend.
+  
+  **2. Seasonality** : There is no indication of seasonality.
+  
+  **3. Changing Variance** : There is no obvious evidence of changing variance.
+  
+  **4. Behaviour** : The time series closely follows auto-regressive behaviour
+  
+  **5. Intervention Point** : There is no intervention point in the series.
+  
+  **6. Stationarity**: Decaying pattern in ACF plot and p-value(0.8458) in adf test suggest that the Residential PPI series is non-stationary with 5% level of significance.
+
+#### 2. Population Change
+
+```{r}
+descriptive_analysis(change_TS, "Population Change")
+```
+**Time Series Characteristics**
+
+  **1. Trend** : Time series plot depicts postive trend as population change has increased over the time, however there was drop between 2009-2011. Slowly decaying pattern in ACF plots gives assumption of existance of trend.
+  
+  **2. Seasonality** : There is strong indication of seasonality as 2nd Quarter has lowest level of population change and 1st Quarter has highest level of populatoin change throughout the series. The little wave-like patterns gives indication of seasonality.
+  
+  **3. Changing Variance** : There is little changing variance. However, this might be impact og seasonality.
+  
+  **4. Behaviour** : The time series closely follows Moving Average behaviour.
+  
+  **5. Intervention Point** : There is no intervention point in the series.
+  
+  **6. Stationarity**: Decaying pattern in ACF plot and p-value(0.7344) in adf test suggest that the population change series is non-stationary with 5% level of significance.
+  
+  
+## **Transformation to Stationary Series**
+
+As both the series is Non-Stationary, the necessary steps of seasonal difference and regular 1sr order difference has been taken to covert them into Stationary Time Series. Then stationarity of the series will be checked again.
+
+
+#### 1. Residential Property Price Index(Differenced)
+```{r}
+price_TS_diff <- diff(diff(price_TS),4)
+descriptive_analysis(price_TS_diff, "Residential PPI (Differenced)")
+```
+**Time Series Characteristics**
+
+  **1. Trend** : The positive trend is removed in the differenced time series, and data points fluctuates around the mean level.
+  
+  **2. Seasonality** : There is no strong indication of seasonality in the series.
+  
+  **3. Changing Variance** : There is obvious changing variance in the series.
+  
+  **4. Behaviour** : The behaviour is more likely combination of Auto-Regressive and Moving Average.
+  
+  **5. Intervention Point** : There is no clear indication of intervention point.
+  
+  **6. Stationarity**: The p-value(0.01) in Augmented Dickey-Fuller Test suggest that the series is Stationary with 5% level of significance.
+  
+#### 2. Population Change(Differenced)
+```{r}
+change_TS_diff <- diff(diff(change_TS),4)
+descriptive_analysis(change_TS_diff, "Population Change(Differenced)")
+```
+**Time Series Characteristics**
+
+  **1. Trend** : The positive trend is removed in the differenced time series, and data points fluctuates around the mean level.
+  
+  **2. Seasonality** : There is no strong indication of seasonality in the series.
+  
+  **3. Changing Variance** : There is obvious changing variance in the series.
+  
+  **4. Behaviour** : The behaviour of the series is Moving Average.
+  
+  **5. Intervention Point** : There is no clear indication of intervention point.
+  
+  **6. Stationarity**: The p-value(0.01) in Augmented Dickey-Fuller Test suggest that the series is Stationary with 5% level of significance.
+  
+
+Now, as both the series are Stationary time series, the prewhitening process can be done. If correlation was spurious, then after the prewhitening process, it is expected that all the unusual high correlation will be disappeared.
+
+## **Prewhitening**
+```{r}
+prewhiten(as.vector(price_TS_diff), 
+          as.vector(change_TS_diff), 
+          ylab='Cross-Covariance Function', 
+          main = "CCF plot of Residential PPI and Population Change after prewhitening")
+
+```
+
+In the above cross-covariance plot, disappearance of all the unusual high correlation is noticed after prewhitening process, there is no significant correlation left between the Residential Property Price Index in Melbourne and population change in Victoria. Ergo, it indicates that, high correlation between Residential PPI and Population change is **Spurious**.
+
+# **Conclusion**
+
+**Task-1**
+  
+  •	The Time Series Regression Models, Exponential Smoothing, State-Space models were fitted and Analysie to find the best suitable model to predict amount of `Monthly Average Solar Radiation`.
+    
+  • The performance criteria was `MASE()`.
+  
+  • On the basis of Residual Checking and MASE(), the `Auto Regressive Distributed Model(ardlDLM(5,5))` appeared as the best time series Distributed Lag Regression Model with `MASE = 0.4479311`, while `Dynamic Model(dynlm_5)` model consist of `3 order lag and season() component` with `MASE = 0.3526816` appeared as best time series dynamic regression model. However, the auto-correlation and seasonal pattern was not captured and explained by any of the Time-Series Regression model. 
+  
+  • In terms of Exponential Smoothing model, the best model was `Holt-Winters' Multiplicative Method_Damped, MASE(0.2233077)` followed by `Holt-Winters' Multiplicative method with Exponential Trend_Damped, MASE(0.2320404)`. Even though, the diagnostic checking was not extremly high, it was significantly better compared to other models. These models reduced auto-correlation in the residuals. 
+  
+  • While, `ETS(A,Ad,A)` came out as best state-space model with lowest `MASE(0.2461797)`. However, this model has not as good diagnostic checking as compared to exponential checking.
+  
+  • The `Holt-Winters' Multiplicative Method_Damped` is best suitable model to predict the amount `Monthly Average Solar Radiaton` for next two years, and prediction from this model suggests that Monthly Average Solar Radiaton will be `decreased` for next `two years(2015 - 2016)`. However, the range of Confidence Interval is extremly wide.
+
+**Task-2**
+
+  • The quarterly Residential Property Price Index (PPI) in Melbourne and Population change in Victoria depicts strong positive trend, indicating strong correlationship between them. However, the `Cross-Covariance Function` has some high unusual correlatoin, indicating potential existance of `Spurious` correlation.
+  
+  • Hence, after transforming the both non-stationary series into stationary series, the `prewhitening` process was applied, in which all the high unusual correlation `disappear`.
+  
+  • To conclude, the correlation between quarterly Residential Property Price Index(PPI) in Melbourne and quarterly Population Change in victoria over the period of `(Q3, 2003 - Q4, 2016)` is `Spurious`. 
+
+# **Reference**
+
+Class Lectres - Labs (modules 3-7)
