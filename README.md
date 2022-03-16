@@ -1,0 +1,2 @@
+# solar_radiation_and_spurious_relationship_forecasting2
+Forecasting Assignment 2
